@@ -8,8 +8,8 @@ import os
 
 app = FastAPI(
     title="E-commerce Item Interactions API",
-    description="Serves clickstream-like data from fact_item_interactions",
-    version="1.0.0",
+    description="Serves clickstream-like data from fact_item_interactions with pagination",
+    version="1.1.0",
 )
 
 # ---------- CONFIG ----------
@@ -41,13 +41,16 @@ def get_interactions(
     event_type: Optional[str] = Query(
         None, description="view, click, add_to_cart, review"
     ),
+    page: int = Query(
+        1, ge=1, description="Page number for pagination (1-based)"
+    ),
     limit: int = Query(
-        100, ge=1, le=1000, description="Max number of records to return"
+        100, ge=1, le=1000, description="Number of records per page"
     )
 ):
     df = df_interactions
 
-    # Date filters
+    # -------- Date Filters --------
     if from_date:
         try:
             dt_from = parse_date(from_date)
@@ -68,6 +71,7 @@ def get_interactions(
                 content={"error": "Invalid to_date format."}
             )
 
+    # -------- Other Filters --------
     if customer_id is not None:
         df = df[df["customer_id"] == customer_id]
 
@@ -77,8 +81,25 @@ def get_interactions(
     if event_type is not None:
         df = df[df["event_type"].str.lower() == event_type.lower()]
 
-    df = df.sort_values("event_timestamp", ascending=False).head(limit)
+    # -------- Sort & Pagination --------
+    df = df.sort_values("event_timestamp", ascending=False)
 
-    result = df.copy()
+    total_records = len(df)
+    total_pages = (total_records + limit - 1) // limit  # Ceiling division
+
+    start = (page - 1) * limit
+    end = start + limit
+
+    page_df = df.iloc[start:end]
+
+    # -------- Format & Return JSON --------
+    result = page_df.copy()
     result["event_timestamp"] = result["event_timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
-    return result.to_dict(orient="records")
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total_records": int(total_records),
+        "total_pages": int(total_pages),
+        "data": result.to_dict(orient="records"),
+    }
